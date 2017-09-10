@@ -1,5 +1,5 @@
 from __future__ import division
-from math import pi, sqrt, sin, cos, atan2
+from math import pi, sqrt, sin, cos, atan2, copysign
 from diff_drive.pose import Pose
 
 class GoalController:
@@ -66,5 +66,14 @@ class GoalController:
 
         # Adjust velocities if linear or angular rates or accel too high.
         # TBD
+        # crude version
+        if abs(desired.xVel) > 0.2:
+            desired.xVel = copysign(0.2, desired.xVel)
+        if abs(desired.thetaVel) > 1.0:
+            desired.thetaVel = copysign(1.0, desired.thetaVel)
+        
+        # diagnostic TODO
+        print('cur: %.2f\t%.2f\t%.2f; goal: %.2f\t%.2f\t%.2f; d: %.2f; xV: %.3f; tV: %.3f' \
+            % (cur.x, cur.y, cur.theta, goal.x, goal.y, goal.theta, d, desired.xVel, desired.thetaVel))
         
         return desired

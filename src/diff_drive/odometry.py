@@ -32,6 +32,15 @@ class Odometry:
 
     def updateRightWheel(self, newCount):
         self.rightEncoder.update(newCount)
+        
+    def normalize_angle(self, a):
+        '''
+        For param a in radians returns value in (-pi, pi]
+        '''
+        a = a % (2 * pi)
+        if a > pi:
+            a -= 2 * pi
+        return(a)
 
     def updatePose(self, newTime):
         """Updates the pose based on the accumulated encoder ticks
@@ -45,7 +54,8 @@ class Odometry:
         deltaTravel = (rightTravel + leftTravel) / 2
         deltaTheta = (rightTravel - leftTravel) / self.wheelSeparation
 
-        if rightTravel == leftTravel:
+        #if rightTravel == leftTravel:
+        if abs(rightTravel - leftTravel) < 1e-5:  # TODO magic number
             deltaX = leftTravel*cos(self.pose.theta)
             deltaY = leftTravel*sin(self.pose.theta)
         else:
@@ -66,10 +76,13 @@ class Odometry:
 
         self.pose.x += deltaX
         self.pose.y += deltaY
-        self.pose.theta = (self.pose.theta + deltaTheta) % (2*pi)
+        #self.pose.theta = (self.pose.theta + deltaTheta) % (2*pi)
+        self.pose.theta = (self.pose.theta + deltaTheta)
+        #self.pose.theta = self.normalize_angle(self.pose.theta + deltaTheta) 
         self.pose.xVel = deltaTravel / deltaTime
         self.pose.yVel = 0
         self.pose.thetaVel = deltaTheta / deltaTime
+        #print('odo-updatePose: %s' % self.pose)
 
         self.lastTime = newTime
 

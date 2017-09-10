@@ -5,7 +5,7 @@ import rospy
 from geometry_msgs.msg import Quaternion
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Int16
+from std_msgs.msg import Int32
 from tf.broadcaster import TransformBroadcaster
 from math import sin, cos
 
@@ -24,17 +24,23 @@ class OdometryNode:
         self.nodeName = rospy.get_name()
         rospy.loginfo("{0} started".format(self.nodeName))
 
-        rospy.Subscriber("lwheel_ticks", Int16, self.leftCallback)
-        rospy.Subscriber("rwheel_ticks", Int16, self.rightCallback)
+        rospy.Subscriber("lwheel_ticks", Int32, self.leftCallback)
+        rospy.Subscriber("rwheel_ticks", Int32, self.rightCallback)
 
-        self.ticksPerMeter = int(rospy.get_param('~ticks_per_meter'))
-        self.wheelSeparation = float(rospy.get_param('~wheel_separation'))
+        #self.ticksPerMeter = int(rospy.get_param('~ticks_per_meter'))
+        #self.wheelSeparation = float(rospy.get_param('~wheel_separation'))
         self.rate = float(rospy.get_param('~rate', 10.0))
         self.baseFrameID = rospy.get_param('~base_frame_id', 'base_link')
         self.odomFrameID = rospy.get_param('~odom_frame_id', 'odom')
         self.encoderMin = int(rospy.get_param('~encoder_min', -32768))
         self.encoderMax = int(rospy.get_param('~encoder_max', 32767))
 
+        # for testing
+        self.ticksPerMeter = 10255
+        self.wheelSeparation = 0.203
+        self.encoderMin = -2147483648
+        self.encoderMax = 2147483647
+        
         self.odometry.setWheelSeparation(self.wheelSeparation)
         self.odometry.setTicksPerMeter(self.ticksPerMeter)
         self.odometry.setEncoderRange(self.encoderMin, self.encoderMax)
@@ -49,6 +55,7 @@ class OdometryNode:
         self.odometry.updatePose(rospy.get_time())
         now = rospy.get_rostime()
         pose = self.odometry.getPose()
+        #rospy.logwarn('dd-odo pose:\t%.3f\t%.3f\t%.3f' % (pose.x, pose.y, pose.theta))
 
         q = Quaternion()
         q.x = 0

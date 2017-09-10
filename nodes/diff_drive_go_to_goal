@@ -2,7 +2,7 @@
 from __future__ import division
 
 import rospy
-from math import pi, asin, acos
+from math import pi, atan2
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32
@@ -36,7 +36,12 @@ class GoToGoalNode:
         self.linearTolerance = rospy.get_param('~linear_tolerance', 0.05)
         self.angularTolerance = rospy.get_param('~angular_tolerance',
                                                 3/180*pi)
+        self.timeout = float(rospy.get_param('~timeout', 3.0))                                  
 
+        # for test, force kP, kA, kB TODO
+        self.kP = 0.3
+        self.kA = 1.0
+        self.kB = 0.1
         self.controller.setConstants(self.kP, self.kA, self.kB)
         self.controller.setLinearTolerance(self.linearTolerance)
         self.controller.setAngularTolerance(self.angularTolerance)
@@ -44,6 +49,7 @@ class GoToGoalNode:
         self.initPose()
         self.goal = None
         
+        self.lastGoalTime = None
         rate = rospy.Rate(self.rate)
         self.lastTwistTime = rospy.get_time()
         while not rospy.is_shutdown():
@@ -57,18 +63,25 @@ class GoToGoalNode:
         self.pose.theta = 0
 
     def publish(self):
-        if self.controller.atGoal(self.pose, self.goal):
-            desired = pose.Pose()
-        else:
-            desired = self.controller.getVelocity(self.pose, self.goal,
-                                                  self.dT)
+        if (self.lastGoalTime is not None and 
+            rospy.get_time() - self.lastGoalTime < self.timeout):
+            # either at goal or moving to goal
+            if self.controller.atGoal(self.pose, self.goal):
+                desired = pose.Pose()
+            else:
+                desired = self.controller.getVelocity(self.pose, self.goal,
+                                                      self.dT)
 
-        d = self.controller.getGoalDistance(self.pose, self.goal)
-        self.distPub.publish(d)
+            d = self.controller.getGoalDistance(self.pose, self.goal)
+            self.distPub.publish(d)
 
-        twist = Twist()
-        twist.linear.x = desired.xVel
-        twist.angular.z = desired.thetaVel
+            twist = Twist()
+            twist.linear.x = desired.xVel
+            twist.angular.z = desired.thetaVel
+            
+        else:  # timed out or no goal
+            twist = Twist()  # empty to stop
+            
         self.twistPub.publish(twist)
 
     def odomCallback(self, newPose):
@@ -77,15 +90,22 @@ class GoToGoalNode:
         orientation = newPose.pose.pose.orientation
         self.pose.x = pos.x
         self.pose.y = pos.y
-        self.pose.theta = 2 * acos(orientation.w)
+        # TODO check out the theta calc - got 6.28 - how...
+        #self.pose.theta = 2 * acos(orientation.w)
+        # fix formula
+        self.pose.theta = atan2(2*(orientation.w * orientation.z), 1 - 2 * orientation.z**2)
+        #print('gtg- self.pose:\t%.3f\t%.3f\t%.3f' % (self.pose.x, self.pose.y, self.pose.theta))
 
     def goalCallback(self, goal):
+        self.lastGoalTime = rospy.get_time()
         self.goal = pose.Pose()
         pos = goal.pose.position
         orientation = goal.pose.orientation
         self.goal.x = pos.x
         self.goal.y = pos.y
-        self.goal.theta = 2 * asin(orientation.z)
+        #self.goal.theta = 2 * asin(orientation.z)
+        self.goal.theta = atan2(2*(orientation.w * orientation.z), 1 - 2 * orientation.z**2)
+        #print('gtg- self.goal:\t%.3f\t%.3f\t%.3f' % (self.goal.x, self.goal.y, self.goal.theta))
 
 if __name__ == '__main__':
     try:
