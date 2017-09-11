@@ -5,7 +5,7 @@ import rospy
 from math import pi, asin
 from geometry_msgs.msg import Twist, Pose
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Int16
+from std_msgs.msg import Int32, Int16
 
 from diff_drive import mock_robot
 
@@ -18,20 +18,20 @@ class MockRobotNode:
 
     def main(self):
         rospy.init_node('diff_drive_mock_robot')
-        self.leftPub = rospy.Publisher('~lwheel_ticks',
-                                       Int16, queue_size=10)
-        self.rightPub = rospy.Publisher('~rwheel_ticks',
-                                        Int16, queue_size=10)
+        self.leftPub = rospy.Publisher('lwheel_ticks',
+                                       Int32, queue_size=10)
+        self.rightPub = rospy.Publisher('rwheel_ticks',
+                                        Int32, queue_size=10)
 
         self.nodeName = rospy.get_name()
         rospy.loginfo("{0} started".format(self.nodeName))
 
-        rospy.Subscriber('~lwheel_desired_rate', Int16, self.leftCallback)
-        rospy.Subscriber('~rwheel_desired_rate', Int16,
+        rospy.Subscriber('lwheel_desired_rate', Int16, self.leftCallback)
+        rospy.Subscriber('rwheel_desired_rate', Int16,
                          self.rightCallback)
 
         self.rate = rospy.get_param('~rate', 10.0)
-        self.timeout = rospy.get_param('~timeout', 0.5)
+        self.timeout = rospy.get_param('~timeout', 2.0)
 
         rate = rospy.Rate(self.rate)
         self.lastTime = rospy.get_time()
@@ -57,6 +57,7 @@ class MockRobotNode:
 
     def leftCallback(self, leftSpeed):
         self.leftSpeed = leftSpeed.data
+        #print('self.leftSpeed: %d' % self.leftSpeed)
         self.robot.setSpeeds(self.leftSpeed, self.rightSpeed)
 
     def rightCallback(self, rightSpeed):

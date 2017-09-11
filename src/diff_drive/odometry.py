@@ -77,8 +77,8 @@ class Odometry:
         self.pose.x += deltaX
         self.pose.y += deltaY
         #self.pose.theta = (self.pose.theta + deltaTheta) % (2*pi)
-        self.pose.theta = (self.pose.theta + deltaTheta)
-        #self.pose.theta = self.normalize_angle(self.pose.theta + deltaTheta) 
+        #self.pose.theta = (self.pose.theta + deltaTheta)
+        self.pose.theta = self.normalize_angle(self.pose.theta + deltaTheta) 
         self.pose.xVel = deltaTravel / deltaTime
         self.pose.yVel = 0
         self.pose.thetaVel = deltaTheta / deltaTime

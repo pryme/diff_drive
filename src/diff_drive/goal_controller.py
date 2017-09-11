@@ -50,12 +50,23 @@ class GoalController:
         d = self.getGoalDistance(cur, goal)
         dTh = abs(cur.theta - goal.theta)
         return d < self.linearTolerance and dTh < self.angularTolerance
+        
+    def normalize_angle(self, a):
+        '''
+        For param a in radians returns value in (-pi, pi]
+        '''
+        a = a % (2 * pi)
+        if a > pi:
+            a -= 2 * pi
+        return(a)
 
     def getVelocity(self, cur, goal, dT):
         desired = Pose()
         d = self.getGoalDistance(cur, goal)
         a = atan2(goal.y - cur.y, goal.x - cur.x) - cur.theta
+        a = self.normalize_angle(a)
         b = cur.theta + a - goal.theta
+        b = self.normalize_angle(b)
         
         if abs(d) < self.linearTolerance:
             desired.xVel = 0
@@ -73,7 +84,9 @@ class GoalController:
             desired.thetaVel = copysign(1.0, desired.thetaVel)
         
         # diagnostic TODO
-        print('cur: %.2f\t%.2f\t%.2f; goal: %.2f\t%.2f\t%.2f; d: %.2f; xV: %.3f; tV: %.3f' \
-            % (cur.x, cur.y, cur.theta, goal.x, goal.y, goal.theta, d, desired.xVel, desired.thetaVel))
+        #print('cur: %.2f\t%.2f\t%.2f; goal: %.2f\t%.2f\t%.2f; d: %.2f; xV: %.3f; tV: %.3f' \
+        #    % (cur.x, cur.y, cur.theta, goal.x, goal.y, goal.theta, d, desired.xVel, desired.thetaVel))
+        print('Errors (c-g): x: %.2f y: %.2f yaw: %.2f d: %.2f; a: %.2f b: %.2f des.xV: %.2f des.tV: %.2f' % 
+            (cur.x-goal.x, cur.y-goal.y, cur.theta-goal.theta, d, a, b, desired.xVel, desired.thetaVel))
         
         return desired

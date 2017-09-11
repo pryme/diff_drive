@@ -40,8 +40,11 @@ class GoToGoalNode:
 
         # for test, force kP, kA, kB TODO
         self.kP = 0.3
-        self.kA = 1.0
+        self.kA = 3.0
         self.kB = 0.1
+        self.linearTolerance = 0.05
+        self.angularTolerance = 0.1
+        
         self.controller.setConstants(self.kP, self.kA, self.kB)
         self.controller.setLinearTolerance(self.linearTolerance)
         self.controller.setAngularTolerance(self.angularTolerance)
