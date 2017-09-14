@@ -61,13 +61,7 @@ class GoalController:
         if goal is None:
             return True
         d = self.getGoalDistance(cur, goal)
-        #~ if fwd:
-            #~ bot_theta = cur.theta
-        #~ else:
-            #~ bot_theta = cur.theta - pi # reverse
-        #~ dTh = abs(self.normalize_angle(bot_theta - goal.theta))
         dTh = abs(self.normalize_angle(cur.theta - goal.theta))
-        #print('dTh: %.2f bot_theta: %.2f goal_theta: %.2f' % (dTh, bot_theta, goal.theta))
         return d < self.linearTolerance and dTh < self.angularTolerance
         
     def normalize_angle(self, a):
