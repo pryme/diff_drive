@@ -40,8 +40,8 @@ class GoToGoalNode:
 
         # for test, force kP, kA, kB TODO
         self.kP = 0.3
-        self.kA = 3.0
-        self.kB = 0.1
+        self.kA = 1.0
+        self.kB = -0.1
         self.linearTolerance = 0.05
         self.angularTolerance = 0.1
         
@@ -51,6 +51,7 @@ class GoToGoalNode:
 
         self.initPose()
         self.goal = None
+        self.forward = True  # True --> goal initially in forward half-plane else goal initially in rearward h-p
         
         self.lastGoalTime = None
         rate = rospy.Rate(self.rate)
@@ -69,11 +70,11 @@ class GoToGoalNode:
         if (self.lastGoalTime is not None and 
             rospy.get_time() - self.lastGoalTime < self.timeout):
             # either at goal or moving to goal
-            if self.controller.atGoal(self.pose, self.goal):
+            if self.controller.atGoal(self.pose, self.goal, self.forward):
                 desired = pose.Pose()
             else:
                 desired = self.controller.getVelocity(self.pose, self.goal,
-                                                      self.dT)
+                                                      self.forward)
 
             d = self.controller.getGoalDistance(self.pose, self.goal)
             self.distPub.publish(d)
@@ -93,11 +94,7 @@ class GoToGoalNode:
         orientation = newPose.pose.pose.orientation
         self.pose.x = pos.x
         self.pose.y = pos.y
-        # TODO check out the theta calc - got 6.28 - how...
-        #self.pose.theta = 2 * acos(orientation.w)
-        # fix formula
         self.pose.theta = atan2(2*(orientation.w * orientation.z), 1 - 2 * orientation.z**2)
-        #print('gtg- self.pose:\t%.3f\t%.3f\t%.3f' % (self.pose.x, self.pose.y, self.pose.theta))
 
     def goalCallback(self, goal):
         self.lastGoalTime = rospy.get_time()
@@ -106,9 +103,30 @@ class GoToGoalNode:
         orientation = goal.pose.orientation
         self.goal.x = pos.x
         self.goal.y = pos.y
-        #self.goal.theta = 2 * asin(orientation.z)
-        self.goal.theta = atan2(2*(orientation.w * orientation.z), 1 - 2 * orientation.z**2)
-        #print('gtg- self.goal:\t%.3f\t%.3f\t%.3f' % (self.goal.x, self.goal.y, self.goal.theta))
+        self.goal.theta = atan2(2*(orientation.w * orientation.z), 
+            1 - 2 * orientation.z**2)
+        # set the fwd/rev direction
+        alpha = -self.pose.theta + atan2(self.goal.y - self.pose.y, 
+            self.goal.x - self.pose.x)
+        alpha = self.normalize_angle(alpha)
+        if alpha < pi/2 and alpha >= -pi/2:
+            self.forward = True
+        else:
+            self.forward = False
+        
+    def normalize_angle(self, a):
+        """Normalizes an angle to range (-pi, pi].
+        
+        Args:
+            a: An angle in radians.
+            
+        Returns:
+            Normalized angle in radians in range (-pi, pi].
+        """
+        a = a % (2 * pi)
+        if a > pi:
+            a -= 2 * pi
+        return(a)
 
 if __name__ == '__main__':
     try:

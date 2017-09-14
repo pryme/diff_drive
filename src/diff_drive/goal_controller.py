@@ -44,49 +44,102 @@ class GoalController:
         diffY = cur.y - goal.y
         return sqrt(diffX*diffX + diffY*diffY)
 
-    def atGoal(self, cur, goal):
+    def atGoal(self, cur, goal, fwd):
+        """Decides if goal has been reached.
+        
+        Args:
+            cur: Current pose (2D) from odometry in /odom frame.
+            goal: Goal pose (2D) in /odom frame.
+            fwd: True if most recent goal, when received, was the in 
+                forward half-plane in the bot frame. Determines if the 
+                bot will drive in forward or reverse direction toward 
+                goal.
+                
+        Returns:
+            Boolean which is True if goal has been reached.
+        """
         if goal is None:
             return True
         d = self.getGoalDistance(cur, goal)
-        dTh = abs(cur.theta - goal.theta)
+        #~ if fwd:
+            #~ bot_theta = cur.theta
+        #~ else:
+            #~ bot_theta = cur.theta - pi # reverse
+        #~ dTh = abs(self.normalize_angle(bot_theta - goal.theta))
+        dTh = abs(self.normalize_angle(cur.theta - goal.theta))
+        #print('dTh: %.2f bot_theta: %.2f goal_theta: %.2f' % (dTh, bot_theta, goal.theta))
         return d < self.linearTolerance and dTh < self.angularTolerance
         
     def normalize_angle(self, a):
-        '''
-        For param a in radians returns value in (-pi, pi]
-        '''
+        """Normalizes an angle to range (-pi, pi].
+        
+        Args:
+            a: An angle in radians.
+            
+        Returns:
+            Normalized angle in radians in range (-pi, pi].
+        """
         a = a % (2 * pi)
         if a > pi:
             a -= 2 * pi
         return(a)
 
-    def getVelocity(self, cur, goal, dT):
+    def getVelocity(self, cur, goal, fwd):
+        """Computes linear and angular velocities to move toward a goal.
+        
+        Drives the robot forward if goal, when received, is in the 
+        forward half-plane in the robot frame. Otherwise drives in 
+        reverse. Uses feedback to try to reach a goal pose.
+        
+        See Introduction to Autonomous Mobile Robots by Siegwart et.al.
+        
+        Args:
+            cur: Current pose (2D) from odometry in /odom frame.
+            goal: Goal pose (2D) in /odom frame.
+            fwd: True if most recent goal, when received, was the in 
+                forward half-plane in the bot frame. Determines if the 
+                bot will drive in forward or reverse direction toward 
+                goal.
+        
+        Returns:
+            desired: A "Pose" struct containing desired linear and 
+            angular velocities in addition to position and orientation.
+        """
         desired = Pose()
         d = self.getGoalDistance(cur, goal)
-        a = atan2(goal.y - cur.y, goal.x - cur.x) - cur.theta
-        a = self.normalize_angle(a)
-        b = cur.theta + a - goal.theta
+        
+        tau = atan2(goal.y - cur.y, goal.x - cur.x)
+        # treat forward and reverse driving differently
+        if fwd:
+            b = tau  # Siegwart sign convention
+            a = tau - cur.theta
+            linear_sign = 1
+        else:
+            b = pi + tau
+            a = tau - cur.theta - pi
+            linear_sign = -1
+            
+        a = self.normalize_angle(a)  # need to stay in (-pi, pi]
         b = self.normalize_angle(b)
         
         if abs(d) < self.linearTolerance:
             desired.xVel = 0
-            desired.thetaVel = -self.kB * b
+            # bot is at position so just spin to goal orientation
+            # TODO need to fix magic numbers for speed limits
+            desired.thetaVel = 1.0 * self.normalize_angle(goal.theta - cur.theta)
         else:
-            desired.xVel = self.kP * d
+            desired.xVel = self.kP * d * linear_sign
             desired.thetaVel = self.kA*a + self.kB*b
 
         # Adjust velocities if linear or angular rates or accel too high.
-        # TBD
-        # crude version
+        # TODO this is crude and should fix magic numbers
         if abs(desired.xVel) > 0.2:
             desired.xVel = copysign(0.2, desired.xVel)
         if abs(desired.thetaVel) > 1.0:
             desired.thetaVel = copysign(1.0, desired.thetaVel)
         
         # diagnostic TODO
-        #print('cur: %.2f\t%.2f\t%.2f; goal: %.2f\t%.2f\t%.2f; d: %.2f; xV: %.3f; tV: %.3f' \
-        #    % (cur.x, cur.y, cur.theta, goal.x, goal.y, goal.theta, d, desired.xVel, desired.thetaVel))
-        print('Errors (c-g): x: %.2f y: %.2f yaw: %.2f d: %.2f; a: %.2f b: %.2f des.xV: %.2f des.tV: %.2f' % 
-            (cur.x-goal.x, cur.y-goal.y, cur.theta-goal.theta, d, a, b, desired.xVel, desired.thetaVel))
+        print('Errors (c-g): x: %.2f y: %.2f yaw: %.2f d: %.2f; a: %.2f b: %.2f fwd: %s, des.xV: %.2f des.tV: %.2f' % 
+            (cur.x-goal.x, cur.y-goal.y, cur.theta-goal.theta, d, a, b, fwd, desired.xVel, desired.thetaVel))
         
         return desired
