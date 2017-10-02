@@ -127,10 +127,10 @@ class GoalController:
 
         # Adjust velocities if linear or angular rates or accel too high.
         # TODO this is crude and should fix magic numbers
-        if abs(desired.xVel) > 0.2:
-            desired.xVel = copysign(0.2, desired.xVel)
-        if abs(desired.thetaVel) > 1.0:
-            desired.thetaVel = copysign(1.0, desired.thetaVel)
+        if abs(desired.xVel) > self.maxLinearSpeed:
+            desired.xVel = copysign(self.maxLinearSpeed, desired.xVel)
+        if abs(desired.thetaVel) > self.maxAngularSpeed:
+            desired.thetaVel = copysign(self.maxAngularSpeed, desired.thetaVel)
         
         # diagnostic TODO
         print('Errors (c-g): x: %.2f y: %.2f yaw: %.2f d: %.2f; a: %.2f b: %.2f fwd: %s, des.xV: %.2f des.tV: %.2f' % 

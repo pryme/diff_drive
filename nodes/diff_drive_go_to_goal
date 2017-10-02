@@ -5,7 +5,7 @@ import rospy
 from math import pi, atan2
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 
 from diff_drive import goal_controller
 from diff_drive import pose
@@ -21,6 +21,7 @@ class GoToGoalNode:
                                        Float32, queue_size=10)
         self.twistPub = rospy.Publisher('cmd_vel',
                                         Twist, queue_size=10)
+        self.atGoalPub = rospy.Publisher('at_goal', Bool, queue_size = 1)
 
         self.nodeName = rospy.get_name()
         rospy.loginfo("{0} started".format(self.nodeName))
@@ -30,24 +31,31 @@ class GoToGoalNode:
 
         self.rate = rospy.get_param('~rate', 10.0)
         self.dT = 1 / self.rate
-        self.kP = rospy.get_param('~kP', 3.0)
-        self.kA = rospy.get_param('~kA', 8.0)
-        self.kB = rospy.get_param('~kB', 1.5)
+        self.kP = rospy.get_param('~kP', 0.3)
+        self.kA = rospy.get_param('~kA', 1.0)
+        self.kB = rospy.get_param('~kB', -0.1)
         self.linearTolerance = rospy.get_param('~linear_tolerance', 0.05)
         self.angularTolerance = rospy.get_param('~angular_tolerance',
                                                 3/180*pi)
-        self.timeout = float(rospy.get_param('~timeout', 3.0))                                  
+        rospy.logwarn('linearTolerance: {}; angularTolerance: {}'.format(self.linearTolerance,
+            self.angularTolerance))  # TODO debug
+        self.maxLinearSpeed = rospy.get_param('~max_linear_speed', 0.20)
+        self.maxAngularSpeed = rospy.get_param('~max_angular_speed', 1.0)
+        self.timeout = float(rospy.get_param('~timeout', 3.0))  
+        self.fresh_goal = False                                
 
         # for test, force kP, kA, kB TODO
-        self.kP = 0.3
-        self.kA = 1.0
-        self.kB = -0.1
-        self.linearTolerance = 0.05
-        self.angularTolerance = 0.1
+        #~ self.kP = 0.3
+        #~ self.kA = 1.0
+        #~ self.kB = -0.1
+        #~ self.linearTolerance = 0.05
+        #~ self.angularTolerance = 0.1
         
         self.controller.setConstants(self.kP, self.kA, self.kB)
         self.controller.setLinearTolerance(self.linearTolerance)
         self.controller.setAngularTolerance(self.angularTolerance)
+        self.controller.setMaxLinearSpeed(self.maxLinearSpeed)
+        self.controller.setMaxAngularSpeed(self.maxAngularSpeed)
 
         self.initPose()
         self.goal = None
@@ -72,7 +80,11 @@ class GoToGoalNode:
             # either at goal or moving to goal
             if self.controller.atGoal(self.pose, self.goal, self.forward):
                 desired = pose.Pose()
+                if self.fresh_goal:
+                    self.atGoalPub.publish(True)
+                self.fresh_goal = False
             else:
+                # TODO do we need to publish atGoal False?
                 desired = self.controller.getVelocity(self.pose, self.goal,
                                                       self.forward)
 
@@ -98,6 +110,7 @@ class GoToGoalNode:
 
     def goalCallback(self, goal):
         self.lastGoalTime = rospy.get_time()
+        self.fresh_goal = True
         self.goal = pose.Pose()
         pos = goal.pose.position
         orientation = goal.pose.orientation
