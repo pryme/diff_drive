@@ -1,0 +1,355 @@
+#! /usr/bin/env python
+from __future__ import division
+
+import rospy
+from math import pi, asin, acos, hypot
+from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Pose2D, Pose, Quaternion, PoseStamped
+
+from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32, String
+
+# from diff_drive import goal_controller
+# from diff_drive import pose
+# import PyKDL
+
+from tf import transformations as t
+import tf
+import collections  # for namedtuple
+
+class GoToGoalNode:
+    """
+    This is a redo of diff_drive_go_to_goal as I got lost trying to patch it.
+    
+    Listens for new goal poses and computes velocities needed to achieve the goal.
+    
+    Subscribes to:
+        * move_base_simple/goal (geometryMsgs/PoseStamped)
+        * odom (nav_msgs/Odometry)
+        * tf (transforms)
+        
+    Publishes:
+        * cmd_vel (geometryMsgs/Twist)
+        * distance_to_goal (std_msgs/Float32)
+        * goal_status (std_msgs/String)  # see if this is really needed TODO
+        
+    """
+#=================== NEW CODE ==============================================
+    def __init__(self):
+        #self.controller = goal_controller.GoalController()
+        pass  # TODO what's needed here
+
+    def main(self):
+        rospy.init_node('diff_drive_go_to_goal2')
+        self.distPub = rospy.Publisher('~distance_to_goal', Float32, queue_size=10)
+        self.twistPub = rospy.Publisher('cmd_vel', Twist, queue_size=10)
+        self.statusPub = rospy.Publisher('goal_status', String, queue_size=10)
+                                
+        self.nodeName = rospy.get_name()
+        rospy.loginfo("{0} started".format(self.nodeName))
+
+        rospy.Subscriber('odom', Odometry, self.odomCallback)
+        rospy.Subscriber('move_base_simple/goal', PoseStamped, self.goalCallback)
+        self.listener = tf.TransformListener()
+        
+        self.rate = int(rospy.get_param('~rate', 10))
+        self.dT = 1.0 / self.rate
+        self.kP = float(rospy.get_param('~kP', 3.0))
+        self.kA = float(rospy.get_param('~kA', 8.0))
+        self.kB = float(rospy.get_param('~kB', 1.5))
+        self.linearTolerance = float(rospy.get_param('~linear_tolerance', 0.2))  # TODO default was 0.05
+        self.angularTolerance = float(rospy.get_param('~angular_tolerance', 0.5))  # TODO default was 3.0/180*pi
+        self.timeout = float(rospy.get_param('~timeout', 10.0))                                  
+
+        # set up the lower level controller        
+        #~ self.controller.setConstants(self.kP, self.kA, self.kB)
+        #~ self.controller.setLinearTolerance(self.linearTolerance)
+        #~ self.controller.setAngularTolerance(self.angularTolerance)
+        
+        self.currentPose = Pose()  # empty geometryMsgs/Pose - will represent current Pose in odom frame
+        self.goalOdomPose = Pose()  # empty geometryMsgs/Pose - will represent goal in odom frame
+        self.MyPose2D = collections.namedtuple('MyPose2D', 'x y yaw')
+        self.curPose2D = self.MyPose2D(x = 0.0, y = 0.0, yaw = 0.0)
+        print('self.curPose2D first:\t%.3f\t%.3f\t%.3f' % self.curPose2D)
+        print('type(self.curPose2D.x:\t%s' % type(self.curPose2D.x))
+        self.goalOdomPose2D = self.MyPose2D(x = 0.0, y = 0.0, yaw = 0.0)
+        
+        rate = rospy.Rate(self.rate)
+        self.lastGoalTime = None
+        while not rospy.is_shutdown():
+            self.publish()
+            rate.sleep()
+    
+    def publish(self):
+        targetVels = Twist()
+        if (self.lastGoalTime is not None and 
+            rospy.get_time() - self.lastGoalTime < self.timeout):
+            # either at goal or moving to goal
+            if self.atGoal():
+                targetVels = Twist()  # empty msg to stop TODO redundant?
+                status = "at_goal"
+            else:
+                targetVels = self.getVelocities()
+                status = "moving_to_goal"
+        else:  # timed out or no goal
+            targetVels = Twist()  # if timed out, issue empty goal TODO redundant?
+            status = 'timed_out_moving_to_goal'
+        
+        self.twistPub.publish(targetVels)
+        self.statusPub.publish(status)
+        #~ d = self.getGoalDistance()
+        #~ self.distPub.publish(d)  # TODO issue if d = None?
+    
+    def odomCallback(self, newPose):  # newPose is Odometry msg
+        self.currentPose = newPose.pose.pose  # geometryMsgs/Pose in odom frame
+        odomP = newPose.pose.pose
+        odomP_orient_np = [odomP.orientation.x, odomP.orientation.y, odomP.orientation.z, odomP.orientation.z]
+        odomYaw = t.euler_from_quaternion(odomP_orient_np, axes='sxyz')[2]
+        self.curPose2D.x = odomP.position.x
+        #~ self.curPose2D.y = odomP.position.y
+        #~ self.curPose2D.yaw = odomYaw
+        print('********')
+        print('type odomP.position.x\t%s' % type(odomP.position.x))
+        print('odomCallback self.curPose2D:\t%.3f\t%.3f\t%.3f' % (self.curPose2D.x, self.curPose2D.y, self.curPose2D.yaw))
+        print('********')
+        
+    def goalCallback(self, newGoal):  # newGoal is PoseStamped msg
+        # determine the frame of newGoal
+        if newGoal.header.frame_id == "odom":  
+            self.goalOdomPose = newGoal.pose
+        elif newGoal.header.frame_id == "base_link":
+            # is it a special case (eliminate this in future?)
+            p = newGoal.pose
+            print('newGoal.pose (base_link): %r' % p)
+            
+            # TODO below s/b function?
+            p_orient_np = [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
+            yaw_BL = t.euler_from_quaternion(p_orient_np, axes='sxyz')[2]
+            print('yaw_BL: %r' % yaw_BL)
+            if p.position.x < 0 and p.position.y == 0 and yaw_BL == 0:
+                # straight reverse
+                print('straight reverse')
+            elif p.position.x == 0 and p.position.y == 0 and abs(yaw_BL) > 0:
+                # spin move
+                print('spin move')
+            else:
+                # other move
+                print('other move')
+            
+            # convert to odom frame here
+            newGoalOdomPoseStamped = self.listener.transformPose('odom', newGoal)
+            self.goalOdomPose = newGoalOdomPoseStamped.pose
+            
+            
+            # diagnostic print out key pose params in both frames
+            p_o = self.goalOdomPose
+            yaw_odom = t.euler_from_quaternion([p_o.orientation.x,
+                                                p_o.orientation.y,
+                                                p_o.orientation.z,
+                                                p_o.orientation.w])[2]
+                                                
+            self.goalOdomPose2D.x = p_o.position.x
+            self.goalOdomPose2D.y = p_o.position.y
+            self.goalOdomPose2D.yaw = yaw_odom
+            print('=== newGoal(base_link) ======= newGoalOdom (odom) ====')
+            print('x:\t%.3f\t\tx:\t\t%.3f' % (p.position.x, p_o.position.x))
+            print('y:\t%.3f\t\ty:\t\t%.3f' % (p.position.y, p_o.position.y))
+            print('yaw_BL:\t%.3f\t\tyaw_odom:\t%.3f' % (yaw_BL, yaw_odom))
+            print('self.goalOdomPose2D:\t%.3f\t.3f\t.3f' % self.goalOdomPose2D)
+            print('======================================================')
+            
+            
+        else:  # not an allowed frame
+            rospy.logwarn("goalCallback: frame error in newGoal")
+        
+    
+    def atGoal(self, curPose, goalPose):
+        '''
+        Determines if robot has reached the goal pose.
+        Params: curPose: current pose (from odometry) as geometry_msgs/Pose msg
+                goalPose: goal pose (in odom frame) as geometry_msgs/Pose msg
+        '''
+        if goalPose is None:
+            return True
+        d = math.hypot(curPose.position.x - goalPose.position.x,
+                        curPose.position.y - goalPose.position.y)
+        pass
+        
+    def getVelocities(self, ):
+        pass
+        
+    def getGoalDistance(self, ):  # TODO eliminate?
+        pass
+        
+if __name__ == '__main__':
+    try:
+        node = GoToGoalNode()
+        node.main()
+    except rospy.ROSInterruptException:
+        pass
+        
+
+#=================== OLD BELOW =============================================
+    #~ def __init__(self):
+        #~ self.controller = goal_controller.GoalController()
+
+    #~ def main(self):
+        #~ rospy.init_node('diff_drive_go_to_goal')
+        #~ self.distPub = rospy.Publisher('~distance_to_goal',
+                                       #~ Float32, queue_size=10)
+        #~ self.twistPub = rospy.Publisher('cmd_vel',
+                                        #~ Twist, queue_size=10)
+        #~ # TODO add doc for below
+        #~ self.statusPub = rospy.Publisher('goal_status', String, queue_size=10)
+        
+        #~ # TODO diagnostics
+        #~ self.selfGoalPub = rospy.Publisher('self_goal_pose', Pose2D, queue_size=10)
+        #~ self.selfPosePub = rospy.Publisher('self_cur_pose', Pose2D, queue_size=10)
+
+        #~ self.nodeName = rospy.get_name()
+        #~ rospy.loginfo("{0} started".format(self.nodeName))
+
+        #~ rospy.Subscriber('odom', Odometry, self.odomCallback)
+        #~ #rospy.Subscriber('move_base_simple/goal', PoseStamped, self.goalCallback)
+        #~ # changing goal input to assume robot frame;
+        #~ rospy.Subscriber('goal_base_link', Pose2D, self.goalCallback)
+        #~ self.listener = tf.TransformListener()
+
+        #~ self.rate = int(rospy.get_param('~rate', 10))
+        #~ self.dT = 1.0 / self.rate
+        #~ self.kP = float(rospy.get_param('~kP', 3.0))
+        #~ self.kA = float(rospy.get_param('~kA', 8.0))
+        #~ self.kB = float(rospy.get_param('~kB', 1.5))
+        #~ self.linearTolerance = float(rospy.get_param('~linear_tolerance', 0.2))  # TODO default was 0.05
+        #~ self.angularTolerance = float(rospy.get_param('~angular_tolerance', 0.5))  # TODO default was 3.0/180*pi
+        #~ # TODO add doc for below                                        
+        #~ self.timeout = float(rospy.get_param('~timeout', 10.0))  
+
+        #~ # TODO setting k's just for initial testing so I don't have to set params
+        #~ self.kP = 0.3
+        #~ self.kA = 0.5
+        #~ self.kB = -0.1
+        #~ self.controller.setConstants(self.kP, self.kA, self.kB)
+        #~ self.controller.setLinearTolerance(self.linearTolerance)
+        #~ self.controller.setAngularTolerance(self.angularTolerance)
+
+        #~ self.initPose()
+        #~ self.goal = None  
+        #~ self.goal_case = None
+        
+        #~ self.cur_Pose = Pose()  # empty geometryMsgs/Pose - will represent current Pose in odom frame
+        #~ self.goal_odom_Pose = Pose()  # empty geometryMsgs/Pose - will represent goal in odom frame
+        #~ self.delta_Pose = Pose()  # empty geometryMsgs/Pose - delta_Pose.orientation * cur_Pose.orientation --> goal_odom_Pose.orientation
+        #~ # therefore delta_Pose is relative rotation between cur and goal
+        
+        #~ rate = rospy.Rate(self.rate)
+        #~ self.lastTwistTime = rospy.get_time()  # TODO not used?
+        #~ self.lastGoalTime = None
+        #~ while not rospy.is_shutdown():
+            #~ self.publish()
+            #~ rate.sleep()
+
+    #~ def initPose(self):
+        #~ self.pose = pose.Pose()
+        #~ self.pose.x = 0
+        #~ self.pose.y = 0
+        #~ self.pose.theta = 0
+
+    #~ def publish(self):
+        #~ if (self.lastGoalTime is not None and 
+            #~ rospy.get_time() - self.lastGoalTime < self.timeout):
+            
+            #~ # get the quaternion which multiplied by current quat yields the goal quat (relative rotation from cur to goal)
+            #~ cur_numpy_quat = [self.cur_Pose.orientation.x, 
+                            #~ self.cur_Pose.orientation.y,
+                            #~ self.cur_Pose.orientation.z,
+                            #~ self.cur_Pose.orientation.w]
+            #~ goal_numpy_quat = [self.goal_odom_Pose.orientation.x, 
+                            #~ self.goal_odom_Pose.orientation.y,
+                            #~ self.goal_odom_Pose.orientation.z,
+                            #~ self.goal_odom_Pose.orientation.w]
+            #~ self.delta_Pose.orientation = Quaternion(*(goal_numpy_quat * 
+                #~ tf.transformations.quaternion_inverse(cur_numpy_quat)))
+            
+            #~ # TODO should be simplified
+            #~ if self.controller.atGoal(self.cur_Pose, self.goal_odom_Pose, self.delta_Pose):
+                #~ desired = pose.Pose()
+                #~ status = 'at_goal'
+            #~ else:
+                #~ desired = self.controller.getVelocity(self.cur_Pose, self.goal_odom_Pose,
+                                                      #~ self.dT, self.goal_case)
+                #~ status = 'moving_to_goal'
+
+            #~ d = self.controller.getGoalDistance(self.cur_Pose, self.goal_odom_Pose)
+            #~ self.distPub.publish(d)
+            
+        #~ else:
+            #~ desired = pose.Pose()  # if timed out, issue empty goal
+            #~ status = 'timed_out_moving_to_goal'
+            
+        #~ twist = Twist()
+        #~ twist.linear.x = desired.xVel
+        #~ twist.angular.z = desired.thetaVel
+        #~ self.twistPub.publish(twist)
+        #~ self.statusPub.publish(status)
+        
+        #~ rot=PyKDL.Rotation.Quaternion(quat.x, quat.y, quat.z, quat.w)
+        #~ return rot.GetRPY()[2]
+    
+    #~ def odomCallback(self, newPose):  # newPose is Odometry msg
+        #~ self.cur_Pose = newPose.pose.pose  # geometryMsgs/Pose
+
+    #~ def goalCallback(self, goal_base_link):
+        #~ # arg is Pose2D in base_link frame
+        #~ self.goal = pose.Pose()  # self.goal is still a pose in odom frame
+        
+        #~ # which case is the goal?
+        #~ if (goal_base_link.x < 0 and goal_base_link.y == 0 and
+            #~ goal_base_link.theta == 0):
+            #~ self.goal_case = "backup"
+        #~ elif (goal_base_link.theta != 0 and goal_base_link.x == 0 and
+            #~ goal_base_link.y == 0):
+            #~ self.goal_case = "spin"
+        #~ else:
+            #~ self.goal_case = "forward"  # ignoring the 'chase' case for now
+        
+        #~ # transform goal to odom frame
+        #~ # msg components called 'x', 'y', 'theta' represent
+        #~ #    'x', 'y' --> coordinates (m) of goal position in robot frame
+        #~ #    'theta' --> heading (rad) of goal pose in robot frame
+        #~ trans = None
+        #~ rot = None
+        #~ try:
+            #~ trans, rot = self.listener.lookupTransform('/odom', '/base_link', rospy.Time(0))
+            #~ self.goal_odom_Pose.position.x = goal_base_link.x + trans[0]
+            #~ self.goal_odom_Pose.position.y = goal_base_link.y + trans[1]
+            #~ # self.goal.x = goal_base_link.x + trans[0]
+            #~ # self.goal.y = goal_base_link.y + trans[1]
+            
+            #~ # fake_Pose = Pose()  # empty geometry_msgs/Pose message; hack to get quaternion object
+            #~ # orientation = fake_Pose.orientation
+            #~ # quaternion about z axis representing goal heading in robot frame
+            #~ q_goal_base_link = tf.transformations.quaternion_about_axis(goal_base_link.theta, (0, 0, 1))
+            #~ # multiply by the transform quat to get orientation in odom frame
+            #~ q_goal_odom = tf.transformations.quaternion_multiply(q_goal_base_link, rot)
+            #~ self.goal_odom_Pose.orientation = Quaternion(*q_goal_odom)  # TODO this may be wrong format...
+            #~ # self.goal_odom_Pose now contains goal Pose in odom frame
+            
+            #~ # orientation.x = q_combined[0]
+            #~ # orientation.y = q_combined[1]            
+            #~ # orientation.z = q_combined[2]            
+            #~ # orientation.w = q_combined[3]
+            #~ #self.goal.theta = self.yaw_from_quat(orientation)
+            #~ self.lastGoalTime = rospy.get_time()  # mark when msg received
+            #~ return True
+
+        #~ except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+            #~ rospy.logwarn("goal_publisher: tf exception raised")
+            #~ return False
+
+#~ if __name__ == '__main__':
+    #~ try:
+        #~ node = GoToGoalNode()
+        #~ node.main()
+    #~ except rospy.ROSInterruptException:
+        #~ pass

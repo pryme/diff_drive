@@ -5,7 +5,7 @@ import rospy
 from math import pi, atan2
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32, Bool
+from std_msgs.msg import Float32, Bool, Int16
 
 from diff_drive import goal_controller
 from diff_drive import pose
@@ -28,6 +28,7 @@ class GoToGoalNode:
 
         rospy.Subscriber('odom', Odometry, self.odomCallback)
         rospy.Subscriber('move_base_simple/goal', PoseStamped, self.goalCallback)
+        rospy.Subscriber('cliff_status', Int16, self.cliffCallback) 
 
         self.rate = rospy.get_param('~rate', 10.0)
         self.dT = 1 / self.rate
@@ -40,7 +41,9 @@ class GoToGoalNode:
         rospy.logwarn('linearTolerance: {}; angularTolerance: {}'.format(self.linearTolerance,
             self.angularTolerance))  # TODO debug
         self.maxLinearSpeed = rospy.get_param('~max_linear_speed', 0.20)
+        self.minLinearSpeed = rospy.get_param('~min_linear_speed', 0.02)
         self.maxAngularSpeed = rospy.get_param('~max_angular_speed', 1.0)
+        self.minAngularSpeed = rospy.get_param('~min_angular_speed', 0.1)
         self.timeout = float(rospy.get_param('~timeout', 3.0))  
         self.fresh_goal = False                                
 
@@ -55,7 +58,9 @@ class GoToGoalNode:
         self.controller.setLinearTolerance(self.linearTolerance)
         self.controller.setAngularTolerance(self.angularTolerance)
         self.controller.setMaxLinearSpeed(self.maxLinearSpeed)
+        self.controller.setMinLinearSpeed(self.minLinearSpeed)
         self.controller.setMaxAngularSpeed(self.maxAngularSpeed)
+        self.controller.setMinAngularSpeed(self.minAngularSpeed)
 
         self.initPose()
         self.goal = None
@@ -78,7 +83,10 @@ class GoToGoalNode:
         if (self.lastGoalTime is not None and 
             rospy.get_time() - self.lastGoalTime < self.timeout):
             # either at goal or moving to goal
-            if self.controller.atGoal(self.pose, self.goal, self.forward):
+            if self.at_cliff:
+                desired = pose.Pose()
+                self.fresh_goal = False
+            elif self.controller.atGoal(self.pose, self.goal, self.forward):
                 desired = pose.Pose()
                 if self.fresh_goal:
                     self.atGoalPub.publish(True)
@@ -110,6 +118,7 @@ class GoToGoalNode:
 
     def goalCallback(self, goal):
         self.lastGoalTime = rospy.get_time()
+        self.at_cliff = False
         self.fresh_goal = True
         self.goal = pose.Pose()
         pos = goal.pose.position
@@ -127,6 +136,10 @@ class GoToGoalNode:
         else:
             self.forward = False
         
+    def cliffCallback(self, msg):        
+        # self.cliff_status = msg?
+        self.at_cliff = msg.data & 0x00001000  # if bit 12 set, motion stopped by cliff
+                    
     def normalize_angle(self, a):
         """Normalizes an angle to range (-pi, pi].
         

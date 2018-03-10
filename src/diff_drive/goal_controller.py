@@ -13,6 +13,10 @@ class GoalController:
         self.kB = 1.5
         self.maxLinearSpeed = 1E9
         self.maxAngularSpeed = 1E9
+        self.minLinearSpeed = 0
+        self.minAngularSpeed = 0
+        self.deadbandLinearSpeed = self.minLinearSpeed / 10.0
+        self.deadbandAngularSpeed = self.minAngularSpeed / 10.0
         self.maxLinearAcceleration = 1E9
         self.linearTolerance = 0.025 # 2.5cm
         self.angularTolerance = 3/180*pi # 3 degrees
@@ -24,9 +28,17 @@ class GoalController:
 
     def setMaxLinearSpeed(self, speed):
         self.maxLinearSpeed = speed
+    
+    def setMinLinearSpeed(self, speed):
+        self.minLinearSpeed = speed
+        self.deadbandLinearSpeed = speed / 10.0
 
     def setMaxAngularSpeed(self, speed):
         self.maxAngularSpeed = speed
+        
+    def setMinAngularSpeed(self, speed):
+        self.minAngularSpeed = speed
+        self.deadbandAngularSpeed = speed / 10.0
 
     def setMaxLinearAcceleration(self, accel):
         self.maxLinearAcceleration = accel
@@ -126,12 +138,21 @@ class GoalController:
             desired.thetaVel = self.kA*a + self.kB*b
 
         # Adjust velocities if linear or angular rates or accel too high.
-        # TODO this is crude and should fix magic numbers
+        # TODO this is crude 
         if abs(desired.xVel) > self.maxLinearSpeed:
             desired.xVel = copysign(self.maxLinearSpeed, desired.xVel)
         if abs(desired.thetaVel) > self.maxAngularSpeed:
             desired.thetaVel = copysign(self.maxAngularSpeed, desired.thetaVel)
-        
+        # Adjust if speeds are too low abs value
+        if abs(desired.xVel) < self.deadbandLinearSpeed:
+            desired.xVel = 0.0
+        elif abs(desired.xVel) < self.minLinearSpeed:
+            desired.xVel = copysign(self.minLinearSpeed, desired.xVel)
+        if abs(desired.thetaVel) < self.deadbandAngularSpeed:
+            desired.thetaVel = 0.0
+        elif abs(desired.thetaVel) < self.minAngularSpeed:
+            desired.thetaVel = copysign(self.minAngularSpeed, desired.thetaVel)
+       
         # diagnostic TODO
         print('Errors (c-g): x: %.2f y: %.2f yaw: %.2f d: %.2f; a: %.2f b: %.2f fwd: %s, des.xV: %.2f des.tV: %.2f' % 
             (cur.x-goal.x, cur.y-goal.y, cur.theta-goal.theta, d, a, b, fwd, desired.xVel, desired.thetaVel))
